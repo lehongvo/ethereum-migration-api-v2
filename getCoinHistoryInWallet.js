@@ -112,7 +112,7 @@ const getFeeTypeAndTokenSymbolMapNetworkId = (networkId, type) => {
   }
 }
 
-const getCoinHistoryInWallet = async (walletAddress, networkId, type) => {
+const getCoinHistoryInWallet = async (walletAddress, networkId, type, page = 1, limit = 50) => {
   // Get token map info based on networkId and type
   const feeTypeAndTokenSymbolMap = getFeeTypeAndTokenSymbolMapNetworkId(networkId, type);
   const { tokenSymbol, tokenContractAddress, feeType } = feeTypeAndTokenSymbolMap;
@@ -125,11 +125,6 @@ const getCoinHistoryInWallet = async (walletAddress, networkId, type) => {
   const chainName = networkId === 1 ? "Ethereum" : "Polygon";
 
   try {
-    console.log(
-      `Fetching transactions for wallet ${walletAddress} on ${chainName} (ChainID: ${networkId})...`
-    );
-    console.log(`Looking for ${isNativeCoin ? 'NATIVE COIN' : 'TOKEN'}: ${tokenSymbol} (${tokenContractAddress})`);
-
     const normalTxUrl = `${apiBaseUrl}?chainid=${networkId}&module=account&action=txlist&address=${walletAddress}&startblock=0&endblock=99999999&sort=desc&apikey=${EtherscanAPIV2Key}`;
 
     const tokenTxUrl = `${apiBaseUrl}?chainid=${networkId}&module=account&action=tokentx&address=${walletAddress}&startblock=0&endblock=99999999&sort=desc&apikey=${EtherscanAPIV2Key}`;
@@ -157,22 +152,17 @@ const getCoinHistoryInWallet = async (walletAddress, networkId, type) => {
       );
     }
 
-    const normalTxs = normalData.result || [];
-    const tokenTxs = tokenData.result || [];
-    console.log(
-      `Found ${normalTxs.length} normal transactions and ${tokenTxs.length} token transfers`
-    );
+    let normalTxs = Array.isArray(normalData.result) ? normalData.result : [];
+    let tokenTxs = Array.isArray(tokenData.result) ? tokenData.result : [];
 
     let filteredTransactions = [];
     
     if (isNativeCoin) {
-      filteredTransactions = normalTxs.filter(tx => tx.value && tx.value !== "0");
-      console.log(`Filtered ${filteredTransactions.length} native coin transactions (value > 0)`);
+      filteredTransactions = normalTxs.filter(tx => tx && tx.value && tx.value !== "0");
     } else {
       filteredTransactions = tokenTxs.filter(tx => 
-        tx.contractAddress.toLowerCase() === tokenContractAddress.toLowerCase()
+        tx && tx.contractAddress && tx.contractAddress.toLowerCase() === tokenContractAddress.toLowerCase()
       );
-      console.log(`Filtered ${filteredTransactions.length} token transfers for contract ${tokenContractAddress}`);
     }
 
     const transformedTransactions = filteredTransactions.map(tx => {
@@ -200,13 +190,21 @@ const getCoinHistoryInWallet = async (walletAddress, networkId, type) => {
         status: (tx.isError === "0" || tx.txreceipt_status === "1") ? 1 : 0, 
         amount: parseFloat(amount),
         created_at: created_at,
-        timestamp: tx.timeStamp,
+        timestamp: parseInt(tx.timeStamp || "0"),
         type: feeType,
         name: tokenSymbol
       };
     });
-    console.log('Transformed transactions:', transformedTransactions);
-    return transformedTransactions;
+
+    // Sort by timestamp descending (newest first)
+    transformedTransactions.sort((a, b) => b.timestamp - a.timestamp);
+
+    // Apply pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const paginatedTransactions = transformedTransactions.slice(startIndex, endIndex);
+    
+    return paginatedTransactions;
   } catch (error) {
     console.error("Error fetching coin history:", error);
     throw error;
@@ -215,8 +213,13 @@ const getCoinHistoryInWallet = async (walletAddress, networkId, type) => {
 
 (async () => {
   try {
-    await getCoinHistoryInWallet(myWalletAddress, 1, 3);
+    // Example: Get TTJP token transactions on Polygon (page 1, limit 5)
+    const result = await getCoinHistoryInWallet(myWalletAddress, 137, 3, 1, 2);
+    
+    console.log(`Returned ${result.length} transactions`);
+    console.log('\nTransactions:', JSON.stringify(result, null, 2));
+    
   } catch (error) {
-    console.error('Error in examples:', error);
+    console.error('Error:', error);
   }
 })();
